@@ -1,139 +1,163 @@
 from fastapi import FastAPI, HTTPException
+from typing import Literal
+from pydantic import BaseModel, EmailStr, Field
 
-app = FastAPI(
-    title="FastAPI Fundamentals",
-    description="A beginner-friendly FastAPI project for Routing and CRUD Operations",
-    version="1.0.0",
-)
+# Create main object
+app = FastAPI(title="FastAPI Fundamentals - Tutorial 3")
 
-# TEMPORARY DATABASE
+#Create in-memory data store
 courses = {
-    1: {"id": 1,
+    1: {
+        "id": 1,
         "title": "Python Basics",
-        "description": "Learn python the easy way!",
-        "instructor": "Mark",
-        "duration_hours": 6,
-        "is_active": True,
+        "description": "Learn the basics of Python programming",
+        "level": "beginner",
+        "duration_minutes": 60,
+        "tags": ["python", "programming"],
+        "instructor": {
+            "name": "Ayesha Khan",
+            "email": "ayesha@example.com",
         },
-    2: {"id": 2,
-        "title": "FastAPI Fundamentals",
-        "description": "Build APIs with your eyes closed!",
-        "instructor": "Yakup",
-        "duration_hours": 12,
-        "is_active": True,
+    },
+    2: {
+        "id": 2,
+        "title": "API Development",
+        "description": "Learn how APIs work with backend applications",
+        "level": "intermediate",
+        "duration_minutes": 90,
+        "tags": ["api", "backend"],
+        "instructor": {
+            "name": "Bilal Ahmed",
+            "email": "bilal@example.com",
         },
-    3: {"id": 3,
-        "title": "Data Analysis with PANDAS",
-        "description": "Clean and analyse data sets!",
-        "instructor": "Bill Gates",
-        "duration_hours": 1,
-        "is_active": False,
-        },
+    },
 }
 
-next_course_id = 4
+next_course_id = 3
 
-# API ROUTES
+# Create instructor pydantic model
+class Instructor(BaseModel):
+    name: str = Field(
+        min_length=2,
+        max_length=50,
+        examples=["Mark Briscoe"],
+    )
+    email: EmailStr = Field(
+        examples=["mark@mcmw.co.uk"]
+    )
 
 
+# Create course pydantic model
+class CourseCreate(BaseModel):
+    title: str = Field(
+        min_length=3,
+        max_length=100,
+        examples=["FastAPI Fundamentals"],
+    )
+    description: str = Field(
+        min_length=10,
+        max_length=100,
+        examples=["Learn how build APIs with FastAPI"]
+    )
+    level: Literal["beginner", "intermediate", "advanced"] = Field(
+        examples=["beginner"]
+    )
+    duration_minutes: int = Field(
+        gt=0,
+        le=600,
+        examples=[90],
+    )
+    tags: list[str] = Field(
+        default=[],
+        examples=[["fastapi","python", "backend"]],
+    )
+    instructor: Instructor
+
+# Create a response model
+class CourseResponse(BaseModel):
+    id: int
+    title: str
+    description: str
+    level: str
+    duration_minutes: int
+    tags: list[str]
+    instructor_name: str
+
+
+def format_course_response(course: dict) -> CourseResponse:
+    return CourseResponse(
+        id=course["id"],
+        title=course["title"],
+        description=course["description"],
+        level=course["level"],
+        duration_minutes=course["duration_minutes"],
+        tags=course.get("tags", []),
+        instructor_name=course.get("instructor", {}).get("name", "Notassigned"),
+    )
+
+
+
+# root endpoint
 @app.get("/")
 def read_root():
     return {
-        "message": "Welcome to FastAPI Course API",
+        "message": "Welcome to the FastAPI course API",
         "docs_url": "/docs",
     }
 
 
-@app.get("/health")
-def health_check():
-    return {
-        "status": "ok"
-    }
+# get courses endpoint
+@app.get("/courses", response_model=list[CourseResponse])
+def get_courses(level: str | None = None):
 
+    course_list= list(courses.values())
 
-# COURSE ENDPOINTS
-@app.get("/courses")
-def list_courses(is_active: bool | None = None, search: str | None = None, limit: int | None = None):
-    course_list = list(courses.values())
-
-    if is_active is not None:
+    if level:
         course_list = [
-            course for course in course_list if course["is_active"] == is_active]
-
-    if search:
-        search_lower = search.lower()
-        course_list = [
-            course
-            for course in course_list
-            if search_lower in course["title"].lower()
-            or search_lower in course["description"].lower()
+            course for course in course_list 
+            if course["level"].lower() == level.lower()
         ]
 
-    if limit is not None:
-        course_list = course_list[:limit]
+    return [format_course_response(course) for course in course_list]
+    
 
-    return {
-        "message": "Courses retrieved successfully",
-        "count": len(course_list),
-        "data": course_list,
-    }
-
-
-@app.get("/courses/{course_id}")
+# get single course endpoint
+@app.get("/courses/{course_id}", response_model=CourseResponse)
 def get_course(course_id: int):
     if course_id not in courses:
         raise HTTPException(status_code=404, detail="Course not found")
 
-    return {
-        "message": "Course found successfully",
-        "data": courses[course_id],
-    }
+    return format_course_response(courses[course_id])
 
 
-@app.post("/courses", status_code=201)
-def create_course(course: dict):
+# post endpoint
+@app.post("/courses", response_model=CourseResponse, status_code=201)
+def create_course(course: CourseCreate):
     global next_course_id
 
-    new_course = {
-        "id": next_course_id,
-        "title": course.get("title"),
-        "description": course.get("description"),
-        "instructor": course.get("instructor"),
-        "duration_hours": course.get("duration_hours"),
-        "is_active": course.get("is_active", True)
-    }
+    course_data = course.model_dump()
+    course_data["id"] = next_course_id
 
-    courses[next_course_id] = new_course
-    next_course_id += 1
+    courses[next_course_id] = course_data
+    next_course_id +=1
 
-    return {
-        "message": "Course created successfully",
-        "data": new_course,
-    }
+    return format_course_response(course_data)
 
 
-@app.put("/courses/{course_id}")
-def update_course(course_id: int, updated_course: dict):
+# put endpoint
+@app.put("/courses/{course_id}", response_model=CourseResponse)
+def update_course(course_id: int, update_course: CourseCreate):
     if course_id not in courses:
         raise HTTPException(status_code=404, detail="Course not found")
 
-    course = courses[course_id]
+    course_data = update_course.model_dump()
+    course_data["id"] = course_id
 
-    course["title"] = updated_course.get("title", course["title"])
-    course["description"] = updated_course.get(
-        "description", course["description"])
-    course["instructor"] = updated_course.get(
-        "instructor", course["instructor"])
-    course["duration_hours"] = updated_course.get(
-        "duration_hours", course["duration_hours"])
-    course["is_active"] = updated_course.get("is_active", course["is_active"])
+    courses[course_id] = course_data
 
-    return {
-        "message": "Course updated successfully",
-        "data": course,
-    }
+    return format_course_response(course_data)
 
-
+# delete endpoint
 @app.delete("/courses/{course_id}")
 def delete_course(course_id: int):
     if course_id not in courses:
@@ -143,5 +167,7 @@ def delete_course(course_id: int):
 
     return {
         "message": "Course deleted successfully",
-        "data": deleted_course
+        "deleted_course": format_course_response(deleted_course),
     }
+
+
